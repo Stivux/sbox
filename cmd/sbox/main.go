@@ -1,14 +1,35 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 
-	"github.com/sagernet/sing-box/option"
+	"github.com/Stivux/sbox/internal/core"
+	"github.com/sagernet/sing/common/json"
 )
 
 func main() {
-	// You can now use the option structs
-	var outbound option.V2RayXHTTPOptions
-	// ... your code using the option package
-	fmt.Println("Using sing-box-lx packages", outbound)
+	var subscriptionURL string
+	if _, err := fmt.Scanf("%s", &subscriptionURL); err != nil {
+		log.Fatalf("Failed to read subscription URL: %v", err)
+	}
+
+	subConfig, err := core.FetchSubscription(subscriptionURL)
+	if err != nil {
+		log.Fatalf("Failed to fetch subscription: %v", err)
+	}
+
+	ctx := context.Background()
+
+	fmt.Println("Fetched Subscription Configuration:")
+	for _, cfg := range subConfig.Subscriptions {
+		// Preferred: context-aware marshal
+		data, marshalErr := json.MarshalContext(ctx, cfg)
+		if marshalErr != nil {
+			log.Printf("marshal error: %v", marshalErr)
+			continue
+		}
+		fmt.Println(string(data))
+	}
 }
