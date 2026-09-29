@@ -9,7 +9,30 @@ import (
 const (
 	vaultFilePerm     = 0o600
 	outboundsFilePerm = 0o644
+	backupSuffix      = ".bak"
 )
+
+// BackupPath is the sidecar replica of the encrypted vault (availability).
+func BackupPath(path string) string {
+	return path + backupSuffix
+}
+
+// BackupVault copies the encrypted vault from src to dest without decrypting it.
+// The replica keeps subscription data available if the primary file is lost or overwritten.
+func BackupVault(src, dest string) error {
+	if src == dest {
+		return fmt.Errorf("backup vault: source and destination are the same")
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("backup vault: read: %w", err)
+	}
+	// #nosec G703 -- dest is a caller-provided path, not user-controlled input
+	if err = os.WriteFile(dest, data, vaultFilePerm); err != nil {
+		return fmt.Errorf("backup vault: write: %w", err)
+	}
+	return nil
+}
 
 // SaveSubscriptions encrypts cfg and writes it to path.
 func SaveSubscriptions(path string, cfg SubscriptionsConfig, password string) error {
@@ -20,6 +43,11 @@ func SaveSubscriptions(path string, cfg SubscriptionsConfig, password string) er
 	enc, err := Encrypt(data, password)
 	if err != nil {
 		return fmt.Errorf("save subscription: encrypt: %w", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		if bakErr := BackupVault(path, BackupPath(path)); bakErr != nil {
+			return fmt.Errorf("save subscription: backup: %w", bakErr)
+		}
 	}
 	if err = os.WriteFile(path, enc, vaultFilePerm); err != nil {
 		return fmt.Errorf("save subscription: write: %w", err)

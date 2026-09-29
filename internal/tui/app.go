@@ -103,6 +103,8 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 			a.deleteSub()
 		case 'u', 'U':
 			a.refresh()
+		case 'b', 'B':
+			a.backupVault()
 		case 'q', 'Q':
 			a.ui.Stop()
 		default:
@@ -527,10 +529,19 @@ func (a *App) save() error {
 	return core.SaveSubscriptions(a.path, a.config, a.password)
 }
 
+func (a *App) backupVault() {
+	dst := core.BackupPath(a.path)
+	if err := core.BackupVault(a.path, dst); err != nil {
+		a.statusMsgf("[red]Backup failed: %v[-]", err)
+		return
+	}
+	a.statusMsgf("[green]Wrote backup %s[-]  |  %s", dst, a.help())
+}
+
 func (a *App) help() string {
 	return fmt.Sprintf(
-		"[yellow]a[-] add  [yellow]d[-] delete  [yellow]u[-] refresh  [yellow]Enter[-] write  "+
-			"[yellow]←/→[-] tabs  [yellow]q[-] quit  |  %d sub(s), %d server(s)",
+		"[yellow]a[-] add  [yellow]d[-] delete  [yellow]u[-] refresh  [yellow]b[-] backup  "+
+			"[yellow]Enter[-] write  [yellow]←/→[-] tabs  [yellow]q[-] quit  |  %d sub(s), %d server(s)",
 		len(a.config.Subscriptions), a.config.ServerCount(),
 	)
 }
