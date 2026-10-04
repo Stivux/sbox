@@ -18,12 +18,12 @@ const (
 	argonThreads = 4
 	argonKeyLen  = 32
 
-	saltLen   = 16
-	nonceLen  = 12
-	gcmTagLen = 16
+	saltLen        = 16
+	nonceLen       = 12
+	gcmTagLen      = 16
+	encryptedMagic = "SBOXE1"
+	headerLen      = len(encryptedMagic) + saltLen + nonceLen
 )
-
-const encryptedMagic string = "SBOXE1"
 
 var (
 	ErrEmptyPassword  = errors.New("password required")
@@ -44,32 +44,26 @@ func Encrypt(plaintext []byte, password string) ([]byte, error) {
 	if password == "" {
 		return nil, ErrEmptyPassword
 	}
-
-	salt := make([]byte, saltLen)
-	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+	salt, err := randN(saltLen)
+	if err != nil {
 		return nil, fmt.Errorf("%w: salt generation: %w", ErrEncrypt, err)
 	}
-
-	gcm, cleanupKey, err := gcmFromPassword(password, salt)
+	gcm, cleanup, err := gcmFromPassword(password, salt)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrEncrypt, err)
 	}
-	defer cleanupKey()
+	defer cleanup()
 
-	nonce := make([]byte, nonceLen)
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+	nonce, err := randN(nonceLen)
+	if err != nil {
 		return nil, fmt.Errorf("%w: nonce generation: %w", ErrEncrypt, err)
 	}
-
-	headerLen := len(encryptedMagic) + saltLen + nonceLen
 	out := make([]byte, 0, headerLen+len(plaintext)+gcm.Overhead())
 	out = append(out, encryptedMagic...)
 	out = append(out, salt...)
 	out = append(out, nonce...)
-
-	// Pass the header slice as Associated Authenticated Data (AAD)
-	aad := out[:headerLen]
-	return gcm.Seal(out, nonce, plaintext, aad), nil
+	// Header is AAD: a swapped salt or nonce fails authentication.
+	return gcm.Seal(out, nonce, plaintext, out[:headerLen]), nil
 }
 
 // Decrypt opens an Encrypt payload with the given password.
@@ -80,49 +74,42 @@ func Decrypt(data []byte, password string) ([]byte, error) {
 	if !IsEncrypted(data) {
 		return nil, ErrNotEncrypted
 	}
-
-	headerLen := len(encryptedMagic) + saltLen + nonceLen
 	if len(data) < headerLen+gcmTagLen {
 		return nil, ErrCorruptPayload
 	}
-
-	aad := data[:headerLen]
-	offset := len(encryptedMagic)
-	salt := data[offset : offset+saltLen]
-	offset += saltLen
-	nonce := data[offset : offset+nonceLen]
-	ciphertext := data[headerLen:]
-
-	gcm, cleanupKey, err := gcmFromPassword(password, salt)
+	salt := data[len(encryptedMagic) : len(encryptedMagic)+saltLen]
+	nonce := data[len(encryptedMagic)+saltLen : headerLen]
+	gcm, cleanup, err := gcmFromPassword(password, salt)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDecrypt, err)
 	}
-	defer cleanupKey()
+	defer cleanup()
 
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, aad)
+	plaintext, err := gcm.Open(nil, nonce, data[headerLen:], data[:headerLen])
 	if err != nil {
 		return nil, ErrWrongPassword
 	}
 	return plaintext, nil
 }
 
+func randN(n int) ([]byte, error) {
+	b := make([]byte, n)
+	_, err := io.ReadFull(rand.Reader, b)
+	return b, err
+}
+
 func gcmFromPassword(password string, salt []byte) (cipher.AEAD, func(), error) {
 	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
-	cleanup := func() {
-		clear(key)
-	}
-
+	cleanup := func() { clear(key) }
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-
 	return gcm, cleanup, nil
 }

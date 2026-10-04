@@ -9,14 +9,13 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"unicode"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
 	"github.com/Stivux/sbox/internal/core"
 )
-
-var errNoServers = errors.New("no servers")
 
 const (
 	// DefaultSubscriptionsPath is the default encrypted subscriptions file name.
@@ -59,9 +58,9 @@ type App struct {
 	status *tview.TextView
 	urlIn  *tview.InputField
 
-	tabIDs   []string
-	active   string
-	pageRefs map[string][]serverRef
+	tabIDs  []string
+	active  string
+	allRefs []serverRef
 }
 
 // Run starts the TUI. Empty path uses DefaultSubscriptionsPath.
@@ -70,11 +69,10 @@ func Run(path string) error {
 		path = DefaultSubscriptionsPath
 	}
 	a := &App{
-		ui:       tview.NewApplication(),
-		path:     path,
-		outPath:  DefaultOutboundsPath,
-		mode:     modePassword,
-		pageRefs: make(map[string][]serverRef),
+		ui:      tview.NewApplication(),
+		path:    path,
+		outPath: DefaultOutboundsPath,
+		mode:    modePassword,
 	}
 	a.ui.SetInputCapture(a.onKey)
 	a.showPassword()
@@ -85,71 +83,66 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 	if a.mode != modeMain {
 		return ev
 	}
-	switch {
-	case ev.Key() == tcell.KeyLeft:
-		a.switchTab(-1)
-		return nil
-	case ev.Key() == tcell.KeyRight:
-		a.switchTab(1)
-		return nil
-	case ev.Key() == tcell.KeyRune:
-		if a.busy.Load() {
-			return ev
+	if ev.Key() == tcell.KeyLeft || ev.Key() == tcell.KeyRight {
+		delta := 1
+		if ev.Key() == tcell.KeyLeft {
+			delta = -1
 		}
-		switch ev.Rune() {
-		case 'a', 'A':
-			a.showAddURL()
-		case 'd', 'D':
-			a.deleteSub()
-		case 'u', 'U':
-			a.refresh()
-		case 'b', 'B':
-			a.backupVault()
-		case 'q', 'Q':
-			a.ui.Stop()
-		default:
-			return ev
-		}
+		a.switchTab(delta)
 		return nil
+	}
+	if ev.Key() != tcell.KeyRune {
+		return ev
+	}
+	r := unicode.ToLower(ev.Rune())
+	if r == 'q' {
+		a.ui.Stop()
+		return nil
+	}
+	if a.busy.Load() {
+		return ev
+	}
+	switch r {
+	case 'a':
+		a.showAddURL()
+	case 'd':
+		a.deleteSub()
+	case 'u':
+		a.refresh()
+	case 'b':
+		a.backupVault()
 	default:
 		return ev
 	}
+	return nil
 }
 
 func (a *App) showPassword() {
 	a.mode = modePassword
-	isNew := !fileExists(a.path)
+	_, statErr := os.Stat(a.path)
+	isNew := statErr != nil
 
 	label := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true)
 	errView := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true)
-	pass := maskedField("Password: ")
-	confirm := maskedField("Confirm:  ")
-
+	pass, confirm := maskedField("Password: "), maskedField("Confirm:  ")
 	form := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(nil, 0, 1, false).
 		AddItem(label, labelH, 0, false).
 		AddItem(pass, rowH, 0, true)
-
 	if isNew {
 		label.SetText("Create a password for your subscription vault\n(first run — no vault file found)")
 		form.AddItem(confirm, rowH, 0, false)
+		cycleFields(a.ui, pass, confirm)
 	} else {
 		label.SetText("Enter password to unlock subscriptions")
 	}
 	form.AddItem(errView, errH, 0, false).AddItem(nil, 0, 1, false)
-
-	pass.SetDoneFunc(func(key tcell.Key) {
-		a.onPasswordDone(key, isNew, pass, confirm, errView)
-	})
-	confirm.SetDoneFunc(func(key tcell.Key) {
-		a.onConfirmDone(key, pass, confirm, errView)
-	})
-
-	centered := tview.NewFlex().
+	pass.SetDoneFunc(func(key tcell.Key) { a.onPasswordDone(key, isNew, pass, confirm, errView) })
+	confirm.SetDoneFunc(func(key tcell.Key) { a.onConfirmDone(key, pass, confirm, errView) })
+	a.ui.SetRoot(tview.NewFlex().
 		AddItem(nil, 0, 1, false).
 		AddItem(form, formW, 0, true).
-		AddItem(nil, 0, 1, false)
-	a.ui.SetRoot(centered, true).SetFocus(pass)
+		AddItem(nil, 0, 1, false), true).SetFocus(pass)
 }
 
 func (a *App) onPasswordDone(
@@ -158,10 +151,6 @@ func (a *App) onPasswordDone(
 ) {
 	if key == tcell.KeyEscape {
 		a.ui.Stop()
-		return
-	}
-	if key == tcell.KeyTab && isNew {
-		a.ui.SetFocus(confirm)
 		return
 	}
 	if key != tcell.KeyEnter {
@@ -181,10 +170,6 @@ func (a *App) onPasswordDone(
 func (a *App) onConfirmDone(key tcell.Key, pass, confirm *tview.InputField, errView *tview.TextView) {
 	if key == tcell.KeyEscape {
 		a.ui.Stop()
-		return
-	}
-	if key == tcell.KeyBacktab {
-		a.ui.SetFocus(pass)
 		return
 	}
 	if key != tcell.KeyEnter {
@@ -247,36 +232,28 @@ func (a *App) showMain() {
 		AddItem(a.status, rowH, 0, false)
 
 	a.ui.SetRoot(a.root, true)
-	a.rebuild()
-	a.focusList()
+	a.redraw()
 }
 
 func (a *App) rebuild() {
-	for _, name := range a.pages.GetPageNames(true) {
-		a.pages.RemovePage(name)
-	}
+	a.pages.Clear()
 	a.tabs.Clear()
 	a.tabIDs = a.tabIDs[:0]
-	clear(a.pageRefs)
+	a.allRefs = nil
 
 	all := newList()
 	a.addTab(tabAll, tabAll, all, true)
-
 	for i, sub := range a.config.Subscriptions {
 		id := subTabPref + strconv.Itoa(i)
 		list := newList()
 		title := sub.DisplayTitle()
-		refs := make([]serverRef, 0, len(sub.Outbounds))
-
 		for j, entry := range sub.Outbounds {
 			ref := serverRef{sub: i, out: j}
-			refs = append(refs, ref)
 			name := entry.DisplayName()
 			list.AddItem(name, "", 0, a.selectFn(ref))
 			all.AddItem(fmt.Sprintf("[%s] %s", title, name), "", 0, a.selectFn(ref))
-			a.pageRefs[tabAll] = append(a.pageRefs[tabAll], ref)
+			a.allRefs = append(a.allRefs, ref)
 		}
-		a.pageRefs[id] = refs
 		a.addTab(id, title, list, false)
 	}
 
@@ -305,6 +282,11 @@ func (a *App) switchTab(delta int) {
 	i := max(slices.Index(a.tabIDs, a.active), 0)
 	i = (i + delta + len(a.tabIDs)) % len(a.tabIDs)
 	a.tabs.Highlight(a.tabIDs[i]).ScrollToHighlight()
+}
+
+func (a *App) redraw() {
+	a.rebuild()
+	a.focusList()
 }
 
 func (a *App) focusList() {
@@ -369,14 +351,12 @@ func (a *App) deleteSub() {
 	if a.active != tabAll {
 		a.active = tabAll
 	}
-	if err := a.save(); err != nil {
-		a.rebuild()
-		a.focusList()
+	err := a.save()
+	a.redraw()
+	if err != nil {
 		a.statusMsgf("[red]Delete failed to save: %v[-]", err)
 		return
 	}
-	a.rebuild()
-	a.focusList()
 	a.statusMsgf("[green]Deleted subscription %q[-]  |  %s", title, a.help())
 }
 
@@ -432,7 +412,7 @@ func (a *App) runFetch(urls []string, pending string, addMode bool) {
 				continue
 			}
 			if len(cfg.Subscriptions) == 0 {
-				out[i].err = errNoServers
+				out[i].err = errors.New("no servers")
 				continue
 			}
 			out[i].sub = cfg.Subscriptions[0]
@@ -461,18 +441,18 @@ func (a *App) applyFetch(results []fetchResult, addMode bool) {
 		ok++
 	}
 
-	if err := a.save(); err != nil && ok > 0 {
-		a.rebuild()
-		a.focusList()
+	if ok == 0 {
+		a.statusMsgf("[red]Failed: %v[-]", firstErr)
+		return
+	}
+	if err := a.save(); err != nil {
+		a.redraw()
 		a.statusMsgf("[red]Updated in memory but save failed: %v[-]", err)
 		return
 	}
-	a.rebuild()
-	a.focusList()
+	a.redraw()
 
 	switch {
-	case ok == 0:
-		a.statusMsgf("[red]Failed: %v[-]", firstErr)
 	case addMode && ok == 1:
 		a.statusMsgf("[green]Added %q (%d servers)[-]  |  %s",
 			last.DisplayTitle(), len(last.Outbounds), a.help())
@@ -501,17 +481,15 @@ func (a *App) targetSub(verb string) (int, bool) {
 	}
 	_, prim := a.pages.GetFrontPage()
 	list, _ := prim.(*tview.List)
-	if list == nil || list.GetItemCount() == 0 {
+	item := -1
+	if list != nil {
+		item = list.GetCurrentItem()
+	}
+	if list == nil || list.GetItemCount() == 0 || item < 0 || item >= len(a.allRefs) {
 		a.statusMsgf("[red]Select a server whose subscription to %s[-]", verb)
 		return 0, false
 	}
-	item := list.GetCurrentItem()
-	refs := a.pageRefs[tabAll]
-	if item < 0 || item >= len(refs) {
-		a.statusMsgf("[red]Select a server whose subscription to %s[-]", verb)
-		return 0, false
-	}
-	return refs[item].sub, true
+	return a.allRefs[item].sub, true
 }
 
 func (a *App) entryAt(ref serverRef) (core.OutboundEntry, bool) {
@@ -550,6 +528,22 @@ func (a *App) statusMsgf(format string, args ...any) {
 	a.status.SetText(" " + fmt.Sprintf(format, args...))
 }
 
+// cycleFields swaps the two first-run inputs. Up and Down never reach InputField done handlers.
+func cycleFields(ui *tview.Application, a, b *tview.InputField) {
+	jump := func(to *tview.InputField) func(*tcell.EventKey) *tcell.EventKey {
+		return func(ev *tcell.EventKey) *tcell.EventKey {
+			key := ev.Key()
+			if key == tcell.KeyTab || key == tcell.KeyBacktab || key == tcell.KeyUp || key == tcell.KeyDown {
+				ui.SetFocus(to)
+				return nil
+			}
+			return ev
+		}
+	}
+	a.SetInputCapture(jump(b))
+	b.SetInputCapture(jump(a))
+}
+
 func maskedField(label string) *tview.InputField {
 	return tview.NewInputField().
 		SetLabel(label).
@@ -558,20 +552,13 @@ func maskedField(label string) *tview.InputField {
 }
 
 func newList() *tview.List {
-	// Disable style tags so names like "[sub] server" are literal text.
-	// With tags on, "[title]" is parsed as a color and selected rows become
-	// white-on-gray (unreadable) on the all tab.
+	// Tags off: "[title] name" would be parsed as a color and selected rows turn white-on-gray.
 	return tview.NewList().
 		ShowSecondaryText(false).
 		SetHighlightFullLine(true).
 		SetSelectedFocusOnly(false).
 		SetWrapAround(true).
 		SetUseStyleTags(false, false)
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 func parseSubIndex(pageID string) (int, bool) {

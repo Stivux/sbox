@@ -12,13 +12,10 @@ const (
 	backupSuffix      = ".bak"
 )
 
-// BackupPath is the sidecar replica of the encrypted vault (availability).
-func BackupPath(path string) string {
-	return path + backupSuffix
-}
+// BackupPath is the sidecar replica of the encrypted vault.
+func BackupPath(path string) string { return path + backupSuffix }
 
 // BackupVault copies the encrypted vault from src to dest without decrypting it.
-// The replica keeps subscription data available if the primary file is lost or overwritten.
 func BackupVault(src, dest string) error {
 	if src == dest {
 		return fmt.Errorf("backup vault: source and destination are the same")
@@ -34,7 +31,7 @@ func BackupVault(src, dest string) error {
 	return nil
 }
 
-// SaveSubscriptions encrypts cfg and writes it to path.
+// SaveSubscriptions encrypts cfg and writes it to path. An existing file is copied to BackupPath first.
 func SaveSubscriptions(path string, cfg SubscriptionsConfig, password string) error {
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -45,8 +42,8 @@ func SaveSubscriptions(path string, cfg SubscriptionsConfig, password string) er
 		return fmt.Errorf("save subscription: encrypt: %w", err)
 	}
 	if _, statErr := os.Stat(path); statErr == nil {
-		if bakErr := BackupVault(path, BackupPath(path)); bakErr != nil {
-			return fmt.Errorf("save subscription: backup: %w", bakErr)
+		if err = BackupVault(path, BackupPath(path)); err != nil {
+			return fmt.Errorf("save subscription: backup: %w", err)
 		}
 	}
 	if err = os.WriteFile(path, enc, vaultFilePerm); err != nil {
@@ -55,7 +52,7 @@ func SaveSubscriptions(path string, cfg SubscriptionsConfig, password string) er
 	return nil
 }
 
-// LoadSubscriptions decrypts the vault at path. Missing file yields an empty config.
+// LoadSubscriptions decrypts the vault at path. A missing file yields an empty config.
 func LoadSubscriptions(path string, password string) (SubscriptionsConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -64,12 +61,10 @@ func LoadSubscriptions(path string, password string) (SubscriptionsConfig, error
 		}
 		return SubscriptionsConfig{}, fmt.Errorf("load subscription: read: %w", err)
 	}
-
 	plain, err := Decrypt(data, password)
 	if err != nil {
 		return SubscriptionsConfig{}, fmt.Errorf("load subscription: decrypt: %w", err)
 	}
-
 	var result SubscriptionsConfig
 	if err = json.Unmarshal(plain, &result); err != nil {
 		return SubscriptionsConfig{}, fmt.Errorf("load subscription: unmarshal: %w", err)

@@ -26,13 +26,12 @@ var (
 // FetchSubscription downloads and parses a subscription URL.
 func FetchSubscription(subURL string) (SubscriptionsConfig, error) {
 	u, err := url.ParseRequestURI(subURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		if err != nil {
-			return SubscriptionsConfig{}, fmt.Errorf("%w: %w", ErrInvalidURL, err)
-		}
+	if err != nil {
+		return SubscriptionsConfig{}, fmt.Errorf("%w: %w", ErrInvalidURL, err)
+	}
+	if u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return SubscriptionsConfig{}, ErrInvalidURL
 	}
-
 	body, err := httpGet(subURL)
 	if err != nil {
 		return SubscriptionsConfig{}, err
@@ -54,15 +53,10 @@ func ParseSubscription(subURL string, data []byte) (SubscriptionsConfig, error) 
 		}
 		entries = append(entries, OutboundEntry{Outbound: outbound, Remarks: outbound.Tag})
 	}
-
-	return SubscriptionsConfig{
-		Subscriptions: []Subscription{{
-			URL:       subURL,
-			Title:     subscriptionTitle(subURL),
-			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-			Outbounds: entries,
-		}},
-	}, nil
+	return SubscriptionsConfig{Subscriptions: []Subscription{{
+		URL: subURL, Title: subscriptionTitle(subURL),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339), Outbounds: entries,
+	}}}, nil
 }
 
 // ParseOutbound converts a share link into a sing-box outbound.
@@ -71,17 +65,14 @@ func ParseOutbound(raw string) (option.Outbound, error) {
 	if err != nil {
 		return option.Outbound{}, fmt.Errorf("%w: %w", ErrInvalidURL, err)
 	}
-
-	switch u.Scheme {
-	case "vless":
-		opts, remarks, parseErr := parser.ParseVLESS(u)
-		if parseErr != nil {
-			return option.Outbound{}, parseErr
-		}
-		return option.Outbound{Type: "vless", Tag: remarks, Options: opts}, nil
-	default:
+	if u.Scheme != "vless" {
 		return option.Outbound{}, fmt.Errorf("%w: %s", ErrUnsupportedScheme, u.Scheme)
 	}
+	opts, remarks, err := parser.ParseVLESS(u)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	return option.Outbound{Type: "vless", Tag: remarks, Options: opts}, nil
 }
 
 func subscriptionTitle(subURL string) string {
@@ -96,10 +87,7 @@ func subscriptionTitle(subURL string) string {
 func maybeBase64(body []byte) []byte {
 	s := strings.TrimSpace(string(body))
 	for _, enc := range []*base64.Encoding{
-		base64.StdEncoding,
-		base64.RawStdEncoding,
-		base64.URLEncoding,
-		base64.RawURLEncoding,
+		base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding,
 	} {
 		if decoded, err := enc.DecodeString(s); err == nil {
 			return decoded
@@ -113,17 +101,14 @@ func httpGet(rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchSubscription, err)
 	}
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchSubscription, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: %s", ErrHTTPStatus, resp.Status)
 	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReadBody, err)
