@@ -7,7 +7,7 @@ require (
 	github.com/rivo/tview v0.42.1-0.20260811193840-c15b79fa47f2
 	github.com/sagernet/sing v0.9.6
 	github.com/sagernet/sing-box v1.14.3
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 )
 
 require (
@@ -16,10 +16,10 @@ require (
 	github.com/miekg/dns v1.1.73 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
-	golang.org/x/net v0.61.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )
 
 replace github.com/sagernet/sing-box => github.com/Leadaxe/sing-box-lx v1.14.1-lx.11
