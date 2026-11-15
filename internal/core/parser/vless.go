@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	TransportTypeHTTP        = "http"
+	transportTypeHTTP        = "http"
 	TransportTypeWebsocket   = "ws"
 	TransportTypeQUIC        = "quic"
 	TransportTypeGRPC        = "grpc"
@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	ErrInvalidScheme     = errors.New("vless: invalid scheme, expected vless://")
+	errInvalidScheme     = errors.New("vless: invalid scheme, expected vless://")
 	ErrInvalidURL        = errors.New("vless: invalid URL")
 	ErrInvalidServerPort = errors.New("parse: invalid server:port format")
 )
@@ -34,7 +34,7 @@ func ParseVLESS(uri *url.URL) (option.VLESSOutboundOptions, string, error) {
 		return option.VLESSOutboundOptions{}, "", ErrInvalidURL
 	}
 	if uri.Scheme != "vless" {
-		return option.VLESSOutboundOptions{}, "", ErrInvalidScheme
+		return option.VLESSOutboundOptions{}, "", errInvalidScheme
 	}
 	serverOpts, err := parseServerOptions(uri.Host)
 	if err != nil {
@@ -92,7 +92,7 @@ func applyTransport(out *option.VLESSOutboundOptions, transportType string, para
 		}
 	case TransportTypeGRPC:
 		t.GRPCOptions.ServiceName = params.Get("s")
-	case TransportTypeHTTP, "h2":
+	case transportTypeHTTP, "h2":
 		t.HTTPOptions.Path = path
 		if host != "" {
 			t.HTTPOptions.Host = []string{host}

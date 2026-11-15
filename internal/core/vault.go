@@ -8,7 +8,7 @@ import (
 
 const (
 	vaultFilePerm     = 0o600
-	outboundsFilePerm = 0o644
+	outboundsFilePerm = 0o600
 	backupSuffix      = ".bak"
 )
 
@@ -20,12 +20,16 @@ func BackupVault(src, dest string) error {
 	if src == dest {
 		return fmt.Errorf("backup vault: source and destination are the same")
 	}
-	data, err := os.ReadFile(src)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		return fmt.Errorf("backup vault: open root: %w", err)
+	}
+	defer root.Close()
+	data, err := root.ReadFile(src)
 	if err != nil {
 		return fmt.Errorf("backup vault: read: %w", err)
 	}
-	// #nosec G703 -- dest is a caller-provided path, not user-controlled input
-	if err = os.WriteFile(dest, data, vaultFilePerm); err != nil {
+	if err = root.WriteFile(dest, data, vaultFilePerm); err != nil {
 		return fmt.Errorf("backup vault: write: %w", err)
 	}
 	return nil
@@ -54,6 +58,7 @@ func SaveSubscriptions(path string, cfg SubscriptionsConfig, password string) er
 
 // LoadSubscriptions decrypts the vault at path. A missing file yields an empty config.
 func LoadSubscriptions(path string, password string) (SubscriptionsConfig, error) {
+	// #nosec G304 -- path is a trusted internal path, not user-controlled input
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

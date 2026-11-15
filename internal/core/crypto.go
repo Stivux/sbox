@@ -26,12 +26,12 @@ const (
 )
 
 var (
-	ErrEmptyPassword  = errors.New("password required")
-	ErrEncrypt        = errors.New("encrypt failed")
-	ErrDecrypt        = errors.New("decrypt failed")
-	ErrWrongPassword  = errors.New("wrong password or corrupted data")
-	ErrNotEncrypted   = errors.New("data is not encrypted")
-	ErrCorruptPayload = errors.New("corrupt encrypted payload")
+	errEmptyPassword  = errors.New("password required")
+	errEncrypt        = errors.New("encrypt failed")
+	errDecrypt        = errors.New("decrypt failed")
+	errWrongPassword  = errors.New("wrong password or corrupted data")
+	errNotEncrypted   = errors.New("data is not encrypted")
+	errCorruptPayload = errors.New("corrupt encrypted payload")
 )
 
 // IsEncrypted reports whether data starts with the encrypted vault magic header.
@@ -42,21 +42,21 @@ func IsEncrypted(data []byte) bool {
 // Encrypt seals plaintext with AES-256-GCM keyed by Argon2id(password).
 func Encrypt(plaintext []byte, password string) ([]byte, error) {
 	if password == "" {
-		return nil, ErrEmptyPassword
+		return nil, errEmptyPassword
 	}
 	salt, err := randN(saltLen)
 	if err != nil {
-		return nil, fmt.Errorf("%w: salt generation: %w", ErrEncrypt, err)
+		return nil, fmt.Errorf("%w: salt generation: %w", errEncrypt, err)
 	}
 	gcm, cleanup, err := gcmFromPassword(password, salt)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrEncrypt, err)
+		return nil, fmt.Errorf("%w: %w", errEncrypt, err)
 	}
 	defer cleanup()
 
 	nonce, err := randN(nonceLen)
 	if err != nil {
-		return nil, fmt.Errorf("%w: nonce generation: %w", ErrEncrypt, err)
+		return nil, fmt.Errorf("%w: nonce generation: %w", errEncrypt, err)
 	}
 	out := make([]byte, 0, headerLen+len(plaintext)+gcm.Overhead())
 	out = append(out, encryptedMagic...)
@@ -69,25 +69,25 @@ func Encrypt(plaintext []byte, password string) ([]byte, error) {
 // Decrypt opens an Encrypt payload with the given password.
 func Decrypt(data []byte, password string) ([]byte, error) {
 	if password == "" {
-		return nil, ErrEmptyPassword
+		return nil, errEmptyPassword
 	}
 	if !IsEncrypted(data) {
-		return nil, ErrNotEncrypted
+		return nil, errNotEncrypted
 	}
 	if len(data) < headerLen+gcmTagLen {
-		return nil, ErrCorruptPayload
+		return nil, errCorruptPayload
 	}
 	salt := data[len(encryptedMagic) : len(encryptedMagic)+saltLen]
 	nonce := data[len(encryptedMagic)+saltLen : headerLen]
 	gcm, cleanup, err := gcmFromPassword(password, salt)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDecrypt, err)
+		return nil, fmt.Errorf("%w: %w", errDecrypt, err)
 	}
 	defer cleanup()
 
 	plaintext, err := gcm.Open(nil, nonce, data[headerLen:], data[:headerLen])
 	if err != nil {
-		return nil, ErrWrongPassword
+		return nil, errWrongPassword
 	}
 	return plaintext, nil
 }
